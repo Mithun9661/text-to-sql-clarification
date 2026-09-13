@@ -1,10 +1,9 @@
 from sqlalchemy import inspect
+from sqlalchemy.engine import Engine
 
-from .database import engine
 
-
-def get_database_schema() -> str:
-    """Return a compact schema description for the LLM."""
+def get_database_schema(engine: Engine) -> str:
+    """Return a compact schema description for the selected database."""
     inspector = inspect(engine)
     lines: list[str] = []
 
@@ -16,6 +15,8 @@ def get_database_schema() -> str:
             part = f"{column['name']} {column['type']}"
             if not column.get("nullable", True):
                 part += " NOT NULL"
+            if column.get("primary_key"):
+                part += " PRIMARY KEY"
             column_parts.append(part)
 
         lines.append(f"TABLE {table_name} ({', '.join(column_parts)})")
@@ -27,5 +28,8 @@ def get_database_schema() -> str:
             lines.append(
                 f"FOREIGN KEY {table_name}.{constrained} -> {referred_table}.{referred}"
             )
+
+    if not lines:
+        return "No user tables were found in this database."
 
     return "\n".join(lines)
