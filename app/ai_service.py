@@ -31,15 +31,16 @@ def _get_client() -> genai.Client:
 def build_query_plan(
     question: str,
     schema: str,
+    dialect: str,
     clarification: str | None = None,
 ) -> QueryPlan:
     today = date.today().isoformat()
 
     prompt = f"""
-You are the reasoning layer of a clarification-aware Text-to-SQL system.
+You are the reasoning layer of a clarification-aware Text-to-SQL system used across different companies.
 
 TODAY: {today}
-DATABASE DIALECT: SQLite
+DATABASE DIALECT: {dialect}
 
 DATABASE SCHEMA:
 {schema}
@@ -53,17 +54,19 @@ USER CLARIFICATION:
 Your job:
 1. Determine whether the question is precise enough to generate ONE correct SQL query.
 2. If an important business term is ambiguous, do NOT guess. Return status='needs_clarification'.
-3. Ask one concise clarification question and provide 2-4 concrete options.
+3. Ask one concise clarification question and provide 2-4 concrete schema-supported options.
 4. If the user supplied a clarification, combine it with the original question before generating SQL.
 5. Resolve relative dates such as 'today', 'last month', and 'this year' using TODAY.
 6. Use only tables and columns that exist in the supplied schema.
-7. Generate only a single read-only SELECT query (WITH/CTE is allowed).
-8. Never generate INSERT, UPDATE, DELETE, DROP, ALTER, CREATE, PRAGMA, ATTACH, or multiple statements.
-9. Do not invent unavailable business concepts. If the schema cannot answer the request, return status='unsupported'.
-10. Add LIMIT 100 for result-list queries unless the query is an aggregate or already naturally returns one/few rows.
+7. Generate SQL valid for the specified DATABASE DIALECT only.
+8. Generate only a single read-only SELECT query (WITH/CTE is allowed).
+9. Never generate INSERT, UPDATE, DELETE, DROP, ALTER, CREATE, PRAGMA, ATTACH, or multiple statements.
+10. Do not invent unavailable business concepts. If the schema cannot answer the request, return status='unsupported'.
+11. Add LIMIT 100 for result-list queries unless the query is an aggregate or already naturally returns one/few rows.
+12. When a business term has multiple measurable meanings supported by the schema, include the important alternatives instead of selecting one silently.
 
 Examples of ambiguity:
-- 'best customer' may mean highest revenue, most orders, or another measurable metric.
+- 'best customer' may mean highest revenue, most orders, highest payment amount, or engagement if those metrics exist.
 - 'top product' may mean revenue or units sold.
 - 'active customer' may have multiple definitions.
 
@@ -72,7 +75,7 @@ A question is NOT ambiguous merely because it is natural language. Ask only when
 
     client = _get_client()
     response = client.models.generate_content(
-        model=os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite"),
+        model=os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite"),
         contents=prompt,
         config=types.GenerateContentConfig(
             response_mime_type="application/json",
