@@ -4,6 +4,7 @@ from sqlalchemy import text
 from dotenv import load_dotenv
 
 from .ai_service import build_query_plan
+from .answer_service import format_answer
 from .database import engine
 from .schema_service import get_database_schema
 from .sql_validator import validate_read_only_sql
@@ -22,7 +23,7 @@ class QueryRequest(BaseModel):
 def home():
     return {
         "message": "Text-to-SQL Clarification API is running",
-        "flow": "question -> ambiguity detection -> clarification -> SQL -> validation -> execution",
+        "flow": "question -> ambiguity detection -> clarification -> SQL -> validation -> execution -> answer",
     }
 
 
@@ -49,15 +50,9 @@ def process_query(request: QueryRequest):
             clarification=request.clarification,
         )
     except RuntimeError as exc:
-        return {
-            "status": "configuration_error",
-            "message": str(exc),
-        }
+        return {"status": "configuration_error", "message": str(exc)}
     except Exception as exc:
-        return {
-            "status": "ai_error",
-            "message": f"AI planning failed: {exc}",
-        }
+        return {"status": "ai_error", "message": f"AI planning failed: {exc}"}
 
     if query_plan.status == "needs_clarification":
         return {
@@ -96,6 +91,7 @@ def process_query(request: QueryRequest):
     return {
         "status": "success",
         "interpreted_question": query_plan.interpreted_question or question,
+        "answer": format_answer(rows),
         "sql": query_plan.sql.strip(),
         "result": rows,
         "row_count": len(rows),
