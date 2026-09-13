@@ -1,6 +1,9 @@
 import { useState } from 'react';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
+const API_URL = import.meta.env.VITE_API_URL ||
+  (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+    ? 'http://127.0.0.1:8000'
+    : 'https://text-to-sql-clarification-api.onrender.com');
 
 export default function App() {
   const [question, setQuestion] = useState('');
@@ -21,7 +24,11 @@ export default function App() {
     }
     setOptions([]); setLoading(true);
     try {
-      const res = await fetch(`${API_URL}/query`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({question:baseQuestion, clarification})});
+      const res = await fetch(`${API_URL}/query`, {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({question:baseQuestion, clarification})
+      });
       const data = await res.json();
       if (data.status === 'clarification_required') {
         setMessages(m => [...m, {type:'assistant', text:data.question}]);
@@ -41,7 +48,7 @@ export default function App() {
     <section className="hero"><p className="eyebrow">CLARIFICATION-AWARE ANALYTICS</p><h1>Ask your database.<br/><em>Without the guessing.</em></h1><p>Natural language questions become safe SQL. If your request has multiple meanings, the AI asks first.</p></section>
     <section className="chat">
       <div className="messages">{messages.map((m,i)=><div key={i} className={`message ${m.type}`}><div className="bubble">{m.text}{m.sql && <details><summary>View generated SQL</summary><pre>{m.sql}</pre></details>}</div></div>)}{loading && <div className="thinking">Analyzing schema and intent...</div>}</div>
-      {options.length > 0 && <div className="options">{options.map(o=><button key={o.id} onClick={()=>ask(originalQuestion,o.id)}>{o.label}</button>)}</div>}
+      {options.length > 0 && <div className="options">{options.map(o=><button key={o.id} onClick={()=>ask(originalQuestion,o.label)}>{o.label}</button>)}</div>}
       <form onSubmit={e=>{e.preventDefault();ask();}}><input value={question} onChange={e=>setQuestion(e.target.value)} placeholder="e.g. Show me last month's best customer"/><button disabled={loading}>Ask →</button></form>
     </section>
     <footer>Ambiguity detection · Read-only SQL · Schema-aware AI</footer>
