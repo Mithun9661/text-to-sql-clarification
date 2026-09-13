@@ -31,11 +31,17 @@ def _engine_for_url(database_url: str) -> Engine:
             "Unsupported database. Use PostgreSQL, MySQL, or SQLite."
         )
 
+    # Pick pure-Python/bundled drivers so common company connection URLs work directly.
+    if dialect == "postgresql" and "+" not in url.drivername:
+        url = url.set(drivername="postgresql+psycopg")
+    elif dialect == "mysql" and "+" not in url.drivername:
+        url = url.set(drivername="mysql+pymysql")
+
     kwargs = {"pool_pre_ping": True}
     if dialect == "sqlite":
         kwargs["connect_args"] = {"check_same_thread": False}
 
-    return create_engine(database_url.strip(), **kwargs)
+    return create_engine(url, **kwargs)
 
 
 def register_database(database_url: str, label: str | None = None) -> dict[str, str]:
