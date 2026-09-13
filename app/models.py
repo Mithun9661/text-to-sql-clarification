@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Date, Float, ForeignKey, Integer, String
+from sqlalchemy import Boolean, Column, Date, Float, ForeignKey, Integer, String
 from sqlalchemy.orm import relationship
 
 from .database import Base
@@ -14,6 +14,7 @@ class Customer(Base):
 
     orders = relationship("Order", back_populates="customer")
     payments = relationship("Payment", back_populates="customer")
+    engagements = relationship("Engagement", back_populates="customer")
 
 
 class Order(Base):
@@ -36,3 +37,16 @@ class Payment(Base):
     payment_date = Column(Date, nullable=False)
 
     customer = relationship("Customer", back_populates="payments")
+
+
+class Engagement(Base):
+    __tablename__ = "engagements"
+
+    id = Column(Integer, primary_key=True, index=True)
+    customer_id = Column(Integer, ForeignKey("customers.id"), nullable=False)
+    channel = Column(String, nullable=False)
+    campaign = Column(String, nullable=False)
+    responded = Column(Boolean, nullable=False, default=False)
+    engagement_date = Column(Date, nullable=False)
+
+    customer = relationship("Customer", back_populates="engagements")
