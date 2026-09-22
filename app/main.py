@@ -10,9 +10,12 @@ from .schema_service import get_database_schema, get_schema_tables
 from .sql_validator import validate_read_only_sql
 from .security import require_admin, authorize_connection
 from .query_executor import execute_read_only
+from .history_api import router as history_router
+from .history_store import save_query
 
 load_dotenv()
 app = FastAPI(title="Universal Text-to-SQL Clarification System")
+app.include_router(history_router)
 MAX_RESULT_ROWS = 200
 cors_origins = [origin.strip() for origin in os.getenv("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(",") if origin.strip()]
 app.add_middleware(CORSMiddleware, allow_origins=cors_origins, allow_credentials=True, allow_methods=["GET", "POST", "OPTIONS"], allow_headers=["*"])
@@ -94,4 +97,10 @@ def process_query(request: QueryRequest, x_api_key: str | None = Header(default=
         rows, truncated = execute_read_only(selected_engine, query_plan.sql, MAX_RESULT_ROWS)
     except Exception:
         return {"status": "execution_error", "message": "Query failed or exceeded its execution deadline. Check SQL and database permissions.", "sql": query_plan.sql}
-    return {"status": "success", "connection": connection_info, "interpreted_question": query_plan.interpreted_question or question, "answer": format_answer(rows), "sql": query_plan.sql.strip(), "result": rows, "row_count": len(rows), "truncated": truncated, "max_result_rows": MAX_RESULT_ROWS, "explanation": query_plan.explanation}
+    answer = format_answer(rows)
+    history_saved = True
+    try:
+        save_query(question, request.clarification, query_plan.sql.strip(), answer, connection_info["connection_id"])
+    except Exception:
+        history_saved = False
+    return {"status": "success", "connection": connection_info, "interpreted_question": query_plan.interpreted_question or question, "answer": answer, "sql": query_plan.sql.strip(), "result": rows, "row_count": len(rows), "truncated": truncated, "max_result_rows": MAX_RESULT_ROWS, "history_saved": history_saved, "explanation": query_plan.explanation}
