@@ -1,128 +1,35 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
-const API_URL = import.meta.env.VITE_API_URL ||
-  (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
-    ? 'http://127.0.0.1:8000'
-    : 'https://text-to-sql-clarification-api.onrender.com');
-
-export default function App() {
-  const [question, setQuestion] = useState('');
-  const [originalQuestion, setOriginalQuestion] = useState('');
-  const [messages, setMessages] = useState([{type:'assistant', text:'Ask a question about your company data. I will clarify ambiguous requests before generating SQL.'}]);
-  const [options, setOptions] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [connectionId, setConnectionId] = useState('demo');
-  const [connectionLabel, setConnectionLabel] = useState('Demo Company Database');
-  const [databaseUrl, setDatabaseUrl] = useState('');
-  const [companyLabel, setCompanyLabel] = useState('');
-  const [connecting, setConnecting] = useState(false);
-  const [connectionMessage, setConnectionMessage] = useState('Using built-in demo database');
-
-  async function connectDatabase(e) {
-    e.preventDefault();
-    if (!databaseUrl.trim() || connecting) return;
-    setConnecting(true);
-    setConnectionMessage('Connecting and reading schema...');
-    try {
-      const res = await fetch(`${API_URL}/connect`, {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({database_url: databaseUrl.trim(), label: companyLabel.trim() || null})
-      });
-      const data = await res.json();
-      if (data.status === 'connected') {
-        setConnectionId(data.connection_id);
-        setConnectionLabel(data.label);
-        setConnectionMessage(`${data.label} connected · ${data.dialect} · ${data.table_count} tables found`);
-        setDatabaseUrl('');
-        setMessages([{type:'assistant', text:`Connected to ${data.label}. Ask any question about this database.`}]);
-        setOptions([]);
-      } else {
-        setConnectionMessage(data.message || 'Could not connect to the database.');
-      }
-    } catch {
-      setConnectionMessage('Could not reach the backend while connecting the database.');
-    } finally {
-      setConnecting(false);
-    }
-  }
-
-  function useDemo() {
-    setConnectionId('demo');
-    setConnectionLabel('Demo Company Database');
-    setConnectionMessage('Using built-in demo database');
-    setMessages([{type:'assistant', text:'Demo database selected. Ask a question about customers, orders, payments, or engagements.'}]);
-    setOptions([]);
-  }
-
-  async function ask(text = question, clarification = null) {
-    if (!text.trim() || loading) return;
-    const baseQuestion = clarification ? originalQuestion : text.trim();
-    if (!clarification) {
-      setOriginalQuestion(baseQuestion);
-      setMessages(m => [...m, {type:'user', text:baseQuestion}]);
-      setQuestion('');
-    } else {
-      setMessages(m => [...m, {type:'user', text:clarification}]);
-    }
-    setOptions([]);
-    setLoading(true);
-    try {
-      const res = await fetch(`${API_URL}/query`, {
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({question:baseQuestion, clarification, connection_id:connectionId})
-      });
-      const data = await res.json();
-      if (data.status === 'clarification_required') {
-        setMessages(m => [...m, {type:'assistant', text:data.question}]);
-        setOptions(data.options || []);
-      } else if (data.status === 'success') {
-        setMessages(m => [...m, {type:'assistant', text:data.answer, sql:data.sql, result:data.result, explanation:data.explanation}]);
-      } else {
-        setMessages(m => [...m, {type:'assistant', text:data.message || 'Unable to answer this question.'}]);
-      }
-    } catch {
-      setMessages(m => [...m, {type:'assistant', text:'Could not connect to the backend API.'}]);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  return <main className="shell">
-    <header><div className="brand">ClarifySQL <span>AI</span></div><div className="badge">Universal Safe Text-to-SQL</div></header>
-
-    <section className="hero">
-      <p className="eyebrow">CLARIFICATION-AWARE ANALYTICS</p>
-      <h1>Connect any database.<br/><em>Ask without guessing.</em></h1>
-      <p>Connect a PostgreSQL, MySQL, or SQLite database. The system reads its schema, detects ambiguity, generates safe SQL, and returns the answer.</p>
-    </section>
-
-    <section className="connect-card">
-      <div className="connect-head">
-        <div><span className="status-dot"></span><strong>{connectionLabel}</strong><p>{connectionMessage}</p></div>
-        <button className="demo-btn" onClick={useDemo}>Use Demo DB</button>
-      </div>
-      <form className="connect-form" onSubmit={connectDatabase}>
-        <input value={companyLabel} onChange={e=>setCompanyLabel(e.target.value)} placeholder="Company name (optional)" />
-        <input type="password" value={databaseUrl} onChange={e=>setDatabaseUrl(e.target.value)} placeholder="postgresql://user:password@host:5432/database" autoComplete="off" />
-        <button disabled={connecting}>{connecting ? 'Connecting...' : 'Connect Database'}</button>
-      </form>
-      <p className="hint">Supported: PostgreSQL, MySQL, SQLite. Connection credentials are used by the backend connection session and are not shown in the chat.</p>
-    </section>
-
-    <section className="chat">
-      <div className="messages">
-        {messages.map((m,i)=><div key={i} className={`message ${m.type}`}><div className="bubble">
-          {m.text}
-          {m.result?.length > 0 && <div className="result-wrap"><table><thead><tr>{Object.keys(m.result[0]).map(k=><th key={k}>{k.replaceAll('_',' ')}</th>)}</tr></thead><tbody>{m.result.map((row,r)=><tr key={r}>{Object.keys(m.result[0]).map(k=><td key={k}>{String(row[k] ?? '')}</td>)}</tr>)}</tbody></table></div>}
-          {m.sql && <details><summary>View generated SQL</summary><pre>{m.sql}</pre></details>}
-        </div></div>)}
-        {loading && <div className="thinking">Analyzing the selected database schema and intent...</div>}
-      </div>
-      {options.length > 0 && <div className="options">{options.map(o=><button key={o.id} onClick={()=>ask(originalQuestion,o.label)}>{o.label}</button>)}</div>}
-      <form className="ask-form" onSubmit={e=>{e.preventDefault();ask();}}><input value={question} onChange={e=>setQuestion(e.target.value)} placeholder="e.g. Show me last month's best customer"/><button disabled={loading}>Ask →</button></form>
-    </section>
-    <footer>Dynamic schema discovery · Ambiguity detection · Read-only SQL · PostgreSQL · MySQL · SQLite</footer>
-  </main>;
+const API_URL = import.meta.env.VITE_API_URL || (['localhost','127.0.0.1'].includes(window.location.hostname) ? 'http://127.0.0.1:8000' : 'https://text-to-sql-clarification-api.onrender.com');
+const examples = ["Show me last month's best customer", 'How many customers signed up last month?', 'Show top 5 customers by revenue', 'Total revenue by month'];
+const welcome = {type:'assistant',text:'Hi! Ask anything about your connected database. If your question is ambiguous, I will clarify it before generating SQL.'};
+const read = (key) => { try { return JSON.parse(localStorage.getItem(key) || '[]'); } catch { return []; } };
+const csv = (rows) => { const keys = Object.keys(rows[0] || {}); return [keys,...rows.map(row=>keys.map(k=>row[k] ?? ''))].map(line=>line.map(v=>'"'+String(v).replaceAll('"','""')+'"').join(',')).join('\n'); };
+function download(name,content) { const url=URL.createObjectURL(new Blob([content],{type:'text/csv;charset=utf-8'})); const a=document.createElement('a');a.href=url;a.download=name;a.click();URL.revokeObjectURL(url); }
+function ResultTable({rows}) { if(!rows?.length)return <p className="muted">No rows returned.</p>;const keys=Object.keys(rows[0]);return <div className="table-scroll"><table><thead><tr>{keys.map(k=><th key={k}>{k.replaceAll('_',' ')}</th>)}</tr></thead><tbody>{rows.map((row,i)=><tr key={i}>{keys.map(k=><td key={k}>{String(row[k] ?? '')}</td>)}</tr>)}</tbody></table></div>; }
+export default function App(){
+ const [question,setQuestion]=useState(''),[originalQuestion,setOriginalQuestion]=useState(''),[messages,setMessages]=useState([welcome]),[options,setOptions]=useState([]),[loading,setLoading]=useState(false);
+ const [connectionId,setConnectionId]=useState('demo'),[connectionLabel,setConnectionLabel]=useState('E-Commerce Demo'),[databaseUrl,setDatabaseUrl]=useState(''),[companyLabel,setCompanyLabel]=useState(''),[connecting,setConnecting]=useState(false),[connectionMessage,setConnectionMessage]=useState('Demo database connected');
+ const [schema,setSchema]=useState(null),[schemaError,setSchemaError]=useState(''),[tab,setTab]=useState('Chat'),[schemaTab,setSchemaTab]=useState('Tables'),[expanded,setExpanded]=useState(''),[saved,setSaved]=useState(()=>read('clarifysql_saved')),[history,setHistory]=useState(()=>read('clarifysql_history')),[chartType,setChartType]=useState('Bar Chart'),[settingsOpen,setSettingsOpen]=useState(false);
+ const latest=useMemo(()=>[...messages].reverse().find(m=>m.sql),[messages]);
+ useEffect(()=>{localStorage.setItem('clarifysql_saved',JSON.stringify(saved));},[saved]);
+ useEffect(()=>{localStorage.setItem('clarifysql_history',JSON.stringify(history.slice(0,50)));},[history]);
+ useEffect(()=>{let active=true;setSchema(null);setSchemaError('');fetch(`${API_URL}/schema?connection_id=${encodeURIComponent(connectionId)}`).then(async r=>{if(!r.ok)throw Error('Schema unavailable');return r.json();}).then(d=>{if(active)setSchema(d);}).catch(()=>{if(active)setSchemaError('Unable to load schema. Reconnect if your backend restarted.');});return()=>{active=false;};},[connectionId]);
+ const tables=useMemo(()=>{if(!schema)return [];const raw=schema.tables || schema;return Array.isArray(raw)?raw:Object.entries(raw).map(([name,value])=>({name,...(typeof value==='object' && value ? value : {})}));},[schema]);
+ const chart=useMemo(()=>{const rows=latest?.result||[];if(!rows.length)return null;const keys=Object.keys(rows[0]);const numeric=keys.find(k=>rows.some(r=>r[k]!==null&&r[k]!==''&&Number.isFinite(Number(r[k]))) && !/^(id|.*_id)$/.test(k)) || keys.find(k=>rows.some(r=>Number.isFinite(Number(r[k]))));const label=keys.find(k=>k!==numeric&&!/^(id|.*_id)$/.test(k))||keys.find(k=>k!==numeric);if(!numeric||!label)return null;const values=rows.slice(0,8).map(r=>({label:String(r[label]),value:Number(r[numeric])||0}));if(!values.some(v=>v.value>0))return null;return {values,numeric,max:Math.max(...values.map(v=>v.value),1)};},[latest]);
+ async function connectDatabase(e){e.preventDefault();if(!databaseUrl.trim()||connecting)return;setConnecting(true);setConnectionMessage('Connecting and reading schema...');try{const res=await fetch(`${API_URL}/connect`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({database_url:databaseUrl.trim(),label:companyLabel.trim()||null})});const data=await res.json();if(data.status==='connected'){setConnectionId(data.connection_id);setConnectionLabel(data.label);setConnectionMessage(`${data.dialect} · ${data.table_count} tables connected`);setDatabaseUrl('');setMessages([{type:'assistant',text:`Connected to ${data.label}. Ask a question about this database.`}]);setOptions([]);setTab('Chat');}else setConnectionMessage(data.message||'Connection failed.');}catch{setConnectionMessage('Backend unavailable. Please try again.');}finally{setConnecting(false);}}
+ function useDemo(){setConnectionId('demo');setConnectionLabel('E-Commerce Demo');setConnectionMessage('Demo database connected');setMessages([welcome]);setOptions([]);setTab('Chat');}
+ async function ask(text=question,clarification=null){if(!text.trim()||loading)return;const base=clarification?originalQuestion:text.trim();if(!clarification){setOriginalQuestion(base);setMessages(m=>[...m,{type:'user',text:base}]);setQuestion('');}else setMessages(m=>[...m,{type:'user',text:clarification}]);setOptions([]);setLoading(true);setTab('Chat');try{const res=await fetch(`${API_URL}/query`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:base,clarification,connection_id:connectionId})});const data=await res.json();if(data.status==='clarification_required'){setMessages(m=>[...m,{type:'assistant',text:data.question}]);setOptions(data.options||[]);}else if(data.status==='success'){setMessages(m=>[...m,{type:'assistant',text:data.answer,sql:data.sql,result:data.result,explanation:data.explanation}]);setHistory(h=>[{question:base,clarification,sql:data.sql,result:data.result,answer:data.answer,connection:connectionLabel,date:new Date().toLocaleString()},...h].slice(0,50));}else setMessages(m=>[...m,{type:'assistant',text:data.message||'Unable to answer.'}]);}catch{setMessages(m=>[...m,{type:'assistant',text:'Could not reach the backend API.'}]);}finally{setLoading(false);}}
+ function saveLatest(){if(!latest?.sql)return;setSaved(s=>[{question:originalQuestion||'Saved query',sql:latest.sql,result:latest.result,date:new Date().toLocaleString()},...s]);}
+ function newChat(){setMessages([welcome]);setOptions([]);setQuestion('');setTab('Chat');}
+ const menu=[['Chat','◉'],['Saved Queries','▤'],['Database Schema','▦'],['Query History','◷'],['Analytics','▥'],['Settings','⚙']];
+ return <div className="app"><header className="topbar"><div className="logo">W<span>◎</span>RLD OF AI<small>From Questions to Insights</small></div><nav><button onClick={()=>setTab('Chat')}>Home</button><button onClick={()=>setSettingsOpen(true)}>About</button><button onClick={()=>setTab('Analytics')}>Features</button><a href="https://github.com/Mithun9661/text-to-sql-clarification" target="_blank" rel="noreferrer">Docs</a></nav><div className="profile"><span>M</span> Mithun Kumar ▾</div></header><div className="workspace"><aside className="sidebar"><button className="new-chat" onClick={newChat}>✚ &nbsp; New Chat</button>{menu.map(([name,icon])=><button key={name} className={`nav-item ${tab===name?'active':''}`} onClick={()=>{setTab(name);if(name==='Settings')setSettingsOpen(true);}}><span>{icon}</span>{name}</button>)}<div className="side-bottom"><div className="side-logo">W◎RLD<br/>OF AI</div><p>“Turn your questions<br/>into real answers.”</p><small>Built with ♥ by Mithun Kumar</small></div></aside><main className="content"><section className="hero"><div className="bot-hero">🤖</div><div><p className="eyebrow">AI-POWERED DATA ANALYTICS</p><h1>Text to SQL with Clarification</h1><p>Transform natural language questions into accurate SQL queries with intelligent clarification.</p><div className="chips"><span>▤ Multi-Database</span><span>◈ Smart Clarifications</span><span>✓ Accurate SQL</span><span>♧ Instant Results</span></div></div><div className="hero-tag">▤ &nbsp; Text to SQL with Clarification<small>Ask · Clarify · Generate · Explore</small></div></section><div className="columns"><div className="primary">
+ {tab==='Chat'&&<section className="chat panel"><div className="panel-heading mobile-heading">✧ AI Assistant <span className="online">● Online</span></div><div className="messages">{messages.map((m,i)=><div key={i} className={`message ${m.type}`}><div className="avatar">{m.type==='user'?'M':'🤖'}</div><div className="bubble"><div>{m.text}</div>{m.sql&&<div className="sql-box"><div className="sql-head">▤ Generated SQL <button onClick={()=>navigator.clipboard.writeText(m.sql)}>▢ Copy</button></div><pre>{m.sql}</pre><button className="save-btn" onClick={saveLatest}>☆ Save query</button></div>}</div></div>)}{loading&&<div className="message assistant"><div className="avatar">🤖</div><div className="bubble">Analyzing schema and question…</div></div>}</div>{options.length>0&&<div className="options">{options.map(o=><button key={o.id} onClick={()=>ask(originalQuestion,o.label)}>✧ {o.label}</button>)}</div>}<form className="ask-form" onSubmit={e=>{e.preventDefault();ask();}}><span>✎</span><input aria-label="Ask a question" value={question} onChange={e=>setQuestion(e.target.value)} placeholder="Ask your question in natural language..."/><button disabled={loading||!question.trim()} aria-label="Send question">➤</button></form><div className="examples"><small>Try these examples:</small><div>{examples.map(e=><button key={e} onClick={()=>ask(e)} disabled={loading}>{e}</button>)}</div></div></section>}
+ {tab==='Saved Queries'&&<section className="panel page-panel"><h2>☆ Saved Queries</h2>{!saved.length&&<p className="muted">No saved queries yet. Generate SQL in Chat and click Save query.</p>}{saved.map((s,i)=><article className="record" key={i}><strong>{s.question}</strong><small>{s.date}</small><pre>{s.sql}</pre><button onClick={()=>navigator.clipboard.writeText(s.sql)}>Copy SQL</button><button onClick={()=>setSaved(v=>v.filter((_,j)=>i!==j))}>Remove</button></article>)}</section>}
+ {tab==='Query History'&&<section className="panel page-panel"><h2>◷ Query History</h2>{!history.length&&<p className="muted">Your successful queries will appear here.</p>}{history.map((h,i)=><article className="record" key={i}><strong>{h.question}</strong><small>{h.date} · {h.connection}</small><p>{h.answer}</p><button onClick={()=>ask(h.question,h.clarification)}>Run again</button><button onClick={()=>setSaved(s=>[{question:h.question,sql:h.sql,result:h.result,date:h.date},...s])}>Save</button></article>)}</section>}
+ {tab==='Database Schema'&&<section className="panel page-panel"><h2>▦ Database Schema</h2><p className="muted">Connected to {connectionLabel}</p>{schemaError&&<p>{schemaError}</p>}{tables.map((t,i)=><article className="record" key={i}><strong>{t.name||t.table_name||`Table ${i+1}`}</strong><pre>{JSON.stringify(t.columns||t,null,2)}</pre></article>)}</section>}
+ {tab==='Analytics'&&<section className="panel page-panel"><h2>▥ Analytics</h2><p className="muted">Charts are generated from actual query results, never placeholder data.</p>{chart?<Chart chart={chart} type={chartType}/>:<p>Ask a query returning a category and numeric value to see a chart.</p>}</section>}
+ {tab==='Settings'&&<section className="panel page-panel"><h2>⚙ Database Settings</h2><p>{connectionMessage}</p><button onClick={useDemo}>Switch to Demo Database</button></section>}
+ </div><div className="right"><section className="panel schema-panel"><div className="panel-heading">▤ Database Schema <span className="db-name">{connectionLabel}</span></div><div className="tabs">{['Tables','Relationships','Sample Data'].map(t=><button key={t} className={schemaTab===t?'selected':''} onClick={()=>setSchemaTab(t)}>{t}</button>)}</div>{schemaTab==='Tables'?<div className="table-list">{schemaError&&<p className="muted">{schemaError}</p>}{tables.map((t,i)=><div key={i}><button onClick={()=>setExpanded(expanded===(t.name||t.table_name)?'':t.name||t.table_name)}>▦ &nbsp; {t.name||t.table_name} <span>›</span></button>{expanded===(t.name||t.table_name)&&<pre>{JSON.stringify(t.columns||t,null,2)}</pre>}</div>)}{!tables.length&&!schemaError&&<p className="muted">Loading schema…</p>}</div>:schemaTab==='Relationships'?<div className="schema-detail">{tables.map((t,i)=><div key={i}><strong>{t.name||t.table_name}</strong><pre>{JSON.stringify(t.foreign_keys||t.relationships||[],null,2)}</pre></div>)}</div>:<p className="muted schema-detail">Sample rows are not fetched automatically to protect company data. Ask a specific question in Chat.</p>}</section><section className="panel result-panel"><div className="panel-heading">▶ Query Results <button disabled={!latest?.result?.length} onClick={()=>download('clarifysql-results.csv',csv(latest.result))}>⇩ Download CSV</button></div>{latest?<ResultTable rows={latest.result}/>:<p className="muted">Results appear here after your first successful query.</p>}</section><section className="panel chart-panel"><div className="panel-heading">▥ Visualization <select value={chartType} onChange={e=>setChartType(e.target.value)}><option>Bar Chart</option><option>Horizontal Bar</option></select></div>{chart?<Chart chart={chart} type={chartType}/>:<div className="empty-chart">Run a query with labels and numbers to visualize your results.</div>}</section><section className="panel connection-panel"><div className="panel-heading">◉ Database Connection <span className="online">● Active</span></div><p className="muted">{connectionMessage}</p><form className="connect-form" onSubmit={connectDatabase}><input value={companyLabel} onChange={e=>setCompanyLabel(e.target.value)} placeholder="Company name (optional)"/><input type="password" value={databaseUrl} onChange={e=>setDatabaseUrl(e.target.value)} autoComplete="off" placeholder="PostgreSQL / MySQL / SQLite URL"/><button disabled={connecting||!databaseUrl.trim()}>{connecting?'Connecting…':'Connect database'}</button></form><button className="demo-btn" onClick={useDemo}>Use demo database</button><p className="hint">Use a read-only database user. Credentials are not stored in browser history.</p></section></div></div></main></div>{settingsOpen&&<div className="modal-backdrop" onClick={()=>setSettingsOpen(false)}><div className="modal panel" onClick={e=>e.stopPropagation()}><button className="close" onClick={()=>setSettingsOpen(false)}>✕</button><h2>World of AI · ClarifySQL</h2><p>Ask questions about company data, clarify ambiguous intent, generate read-only SQL and explore the results.</p><p>Supports PostgreSQL, MySQL and SQLite. Built by Mithun Kumar.</p></div></div>}</div>;
 }
+function Chart({chart,type}){return <div className="chart"><p>Results by {chart.numeric.replaceAll('_',' ')}</p>{chart.values.map((v,i)=><div className={`chart-row ${type==='Bar Chart'?'vertical':''}`} key={i}><span title={v.label}>{v.label}</span><div className="bar-track"><div className="bar" style={{width:`${Math.max(2,100*v.value/chart.max)}%`}}/></div><strong>{v.value.toLocaleString()}</strong></div>)}</div>;}
