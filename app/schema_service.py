@@ -2,34 +2,47 @@ from sqlalchemy import inspect
 from sqlalchemy.engine import Engine
 
 
-def get_database_schema(engine: Engine) -> str:
-    """Return a compact schema description for the selected database."""
+def get_schema_tables(engine: Engine) -> list[dict]:
+    """Return JSON-safe table, column and foreign-key metadata for the UI."""
     inspector = inspect(engine)
-    lines: list[str] = []
+    tables = []
+    for name in inspector.get_table_names():
+        columns = [
+            {
+                "name": column["name"],
+                "type": str(column["type"]),
+                "nullable": bool(column.get("nullable", True)),
+                "primary_key": bool(column.get("primary_key")),
+            }
+            for column in inspector.get_columns(name)
+        ]
+        foreign_keys = [
+            {
+                "columns": key.get("constrained_columns", []),
+                "referred_table": key.get("referred_table"),
+                "referred_columns": key.get("referred_columns", []),
+            }
+            for key in inspector.get_foreign_keys(name)
+        ]
+        tables.append({"name": name, "columns": columns, "foreign_keys": foreign_keys})
+    return tables
 
-    for table_name in inspector.get_table_names():
-        columns = inspector.get_columns(table_name)
-        column_parts = []
 
-        for column in columns:
-            part = f"{column['name']} {column['type']}"
-            if not column.get("nullable", True):
+def get_database_schema(engine: Engine) -> str:
+    """Compact schema description for AI prompts, derived from the same UI metadata."""
+    lines = []
+    for table in get_schema_tables(engine):
+        parts = []
+        for column in table["columns"]:
+            part = f'{column["name"]} {column["type"]}'
+            if not column["nullable"]:
                 part += " NOT NULL"
-            if column.get("primary_key"):
+            if column["primary_key"]:
                 part += " PRIMARY KEY"
-            column_parts.append(part)
-
-        lines.append(f"TABLE {table_name} ({', '.join(column_parts)})")
-
-        for foreign_key in inspector.get_foreign_keys(table_name):
-            constrained = ", ".join(foreign_key.get("constrained_columns", []))
-            referred_table = foreign_key.get("referred_table")
-            referred = ", ".join(foreign_key.get("referred_columns", []))
-            lines.append(
-                f"FOREIGN KEY {table_name}.{constrained} -> {referred_table}.{referred}"
-            )
-
-    if not lines:
-        return "No user tables were found in this database."
-
-    return "\n".join(lines)
+            parts.append(part)
+        lines.append(f'TABLE {table["name"]} ({", ".join(parts)})')
+        for key in table["foreign_keys"]:
+            source = ", ".join(key["columns"])
+            target = ", ".join(key["referred_columns"])
+            lines.append(f'FOREIGN KEY {table["name"]}.{source} -> {key["referred_table"]}.{target}')
+    return "\n".join(lines) if lines else "No user tables were found in this database."
