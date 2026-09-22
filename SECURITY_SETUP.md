@@ -1,0 +1,10 @@
+# Authentication, timeouts and history setup
+
+Backend code added September 22, 2026. **Not a complete multi-user login system.**
+
+- Set a long random `ADMIN_API_KEY` in Render environment variables (never commit it). `/connect` and `/disconnect` require `X-API-Key`; `/schema`, `/query`, and `/history` require it for non-demo connections. With no key configured, external connections are intentionally disabled. The existing frontend does not yet send this header, so its external-database connection form will fail until a secure login/session or server-side proxy is implemented. Do not put the admin key in Vite environment variables, frontend source, or localStorage.
+- `QUERY_TIMEOUT_MS` defaults to 5000, bounded between 100 and 30000 milliseconds. PostgreSQL uses transaction-local statement timeout and read-only transaction; SQLite uses a progress handler and query_only. MySQL SELECT uses MAX_EXECUTION_TIME optimizer hint (not a guaranteed deadline for every statement); use a read-only database account and server-enforced timeouts. AI model planning is not covered by the SQL timeout.
+- `HISTORY_DATABASE_URL` should point to a persistent PostgreSQL database. Without it, history uses `./history.db`, which can disappear on Render's ephemeral filesystem. `/history?connection_id=demo` lists history, and `POST /history/clear` clears it. Company history requires the API key. History is shared by connection ID, not separated by users; demo history is shared publicly. Frontend history is still localStorage and is not yet wired to these endpoints.
+- Company connection credentials and connection IDs are in-process only; they disappear after a restart. The admin key is a coarse admin gate, not per-user authentication. Company DB URL allowlisting / network egress restriction is still required to mitigate SSRF. Do not expose this endpoint to untrusted users even with an admin key.
+
+Before declaring production ready: implement per-user authentication and authorization, secure credential vault/connection persistence, allowlisted DB hosts, frontend session integration, frontend history synchronization, MySQL hard timeouts, and end-to-end tests.
