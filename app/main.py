@@ -8,13 +8,8 @@ from sqlalchemy import text
 
 from .ai_service import build_query_plan
 from .answer_service import format_answer
-from .database import (
-    disconnect_database,
-    get_connection_info,
-    get_engine,
-    register_database,
-)
-from .schema_service import get_database_schema
+from .database import disconnect_database, get_connection_info, get_engine, register_database
+from .schema_service import get_database_schema, get_schema_tables
 from .sql_validator import validate_read_only_sql
 
 load_dotenv()
@@ -54,8 +49,8 @@ def connect_database(request: DatabaseConnectRequest):
     try:
         info = register_database(request.database_url, request.label)
         selected_engine = get_engine(info["connection_id"])
-        database_schema = get_database_schema(selected_engine)
-        return {"status": "connected", **info, "table_count": sum(line.startswith("TABLE ") for line in database_schema.splitlines()), "schema": database_schema}
+        tables = get_schema_tables(selected_engine)
+        return {"status": "connected", **info, "table_count": len(tables), "schema": get_database_schema(selected_engine), "tables": tables}
     except Exception:
         return {"status": "connection_error", "message": "Could not connect to database. Verify the URL, network access and read-only credentials."}
 
@@ -70,7 +65,7 @@ def disconnect(request: DisconnectRequest):
 def schema(connection_id: str | None = None):
     try:
         selected_engine = get_engine(connection_id)
-        return {"connection": get_connection_info(connection_id), "schema": get_database_schema(selected_engine)}
+        return {"connection": get_connection_info(connection_id), "schema": get_database_schema(selected_engine), "tables": get_schema_tables(selected_engine)}
     except KeyError:
         return {"status": "connection_error", "message": "Database connection not found. Please reconnect."}
     except Exception:
@@ -105,7 +100,6 @@ def process_query(request: QueryRequest):
         return {"status": "blocked_query", "message": validation_error, "sql": query_plan.sql}
     try:
         with selected_engine.connect() as connection:
-            # Fetch one additional row to detect truncation without materializing an entire result set.
             result = connection.execution_options(stream_results=True).execute(text(query_plan.sql))
             fetched = result.fetchmany(MAX_RESULT_ROWS + 1)
             truncated = len(fetched) > MAX_RESULT_ROWS
