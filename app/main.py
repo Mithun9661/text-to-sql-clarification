@@ -1,16 +1,15 @@
 import os
-
 from dotenv import load_dotenv
-from fastapi import FastAPI
+from fastapi import FastAPI, Header, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from sqlalchemy import text
-
 from .ai_service import build_query_plan
 from .answer_service import format_answer
 from .database import disconnect_database, get_connection_info, get_engine, register_database
 from .schema_service import get_database_schema, get_schema_tables
 from .sql_validator import validate_read_only_sql
+from .security import require_admin, authorize_connection
+from .query_executor import execute_read_only
 
 load_dotenv()
 app = FastAPI(title="Universal Text-to-SQL Clarification System")
@@ -18,33 +17,27 @@ MAX_RESULT_ROWS = 200
 cors_origins = [origin.strip() for origin in os.getenv("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(",") if origin.strip()]
 app.add_middleware(CORSMiddleware, allow_origins=cors_origins, allow_credentials=True, allow_methods=["GET", "POST", "OPTIONS"], allow_headers=["*"])
 
-
 class DatabaseConnectRequest(BaseModel):
     database_url: str
     label: str | None = None
 
-
 class DisconnectRequest(BaseModel):
     connection_id: str
-
 
 class QueryRequest(BaseModel):
     question: str
     clarification: str | None = None
     connection_id: str | None = None
 
-
 @app.get("/")
 def home():
     return {"message": "Universal Text-to-SQL Clarification API is running", "supported_databases": ["PostgreSQL", "MySQL", "SQLite"], "flow": "connect database -> schema discovery -> ambiguity detection -> clarification -> SQL -> validation -> execution -> answer"}
-
 
 @app.get("/health")
 def health():
     return {"status": "ok"}
 
-
-@app.post("/connect")
+@app.post("/connect", dependencies=[Depends(require_admin)])
 def connect_database(request: DatabaseConnectRequest):
     try:
         info = register_database(request.database_url, request.label)
@@ -54,15 +47,14 @@ def connect_database(request: DatabaseConnectRequest):
     except Exception:
         return {"status": "connection_error", "message": "Could not connect to database. Verify the URL, network access and read-only credentials."}
 
-
-@app.post("/disconnect")
+@app.post("/disconnect", dependencies=[Depends(require_admin)])
 def disconnect(request: DisconnectRequest):
     disconnect_database(request.connection_id)
     return {"status": "disconnected"}
 
-
 @app.get("/schema")
-def schema(connection_id: str | None = None):
+def schema(connection_id: str | None = None, x_api_key: str | None = Header(default=None)):
+    authorize_connection(connection_id, x_api_key)
     try:
         selected_engine = get_engine(connection_id)
         return {"connection": get_connection_info(connection_id), "schema": get_database_schema(selected_engine), "tables": get_schema_tables(selected_engine)}
@@ -71,9 +63,9 @@ def schema(connection_id: str | None = None):
     except Exception:
         return {"status": "schema_error", "message": "Could not read database schema."}
 
-
 @app.post("/query")
-def process_query(request: QueryRequest):
+def process_query(request: QueryRequest, x_api_key: str | None = Header(default=None)):
+    authorize_connection(request.connection_id, x_api_key)
     question = request.question.strip()
     if not question:
         return {"status": "error", "message": "Question cannot be empty."}
@@ -99,12 +91,7 @@ def process_query(request: QueryRequest):
     if not is_valid:
         return {"status": "blocked_query", "message": validation_error, "sql": query_plan.sql}
     try:
-        with selected_engine.connect() as connection:
-            result = connection.execution_options(stream_results=True).execute(text(query_plan.sql))
-            fetched = result.fetchmany(MAX_RESULT_ROWS + 1)
-            truncated = len(fetched) > MAX_RESULT_ROWS
-            rows = [dict(row._mapping) for row in fetched[:MAX_RESULT_ROWS]]
-            result.close()
+        rows, truncated = execute_read_only(selected_engine, query_plan.sql, MAX_RESULT_ROWS)
     except Exception:
-        return {"status": "execution_error", "message": "Query execution failed. Check the generated SQL and database permissions.", "sql": query_plan.sql}
+        return {"status": "execution_error", "message": "Query failed or exceeded its execution deadline. Check SQL and database permissions.", "sql": query_plan.sql}
     return {"status": "success", "connection": connection_info, "interpreted_question": query_plan.interpreted_question or question, "answer": format_answer(rows), "sql": query_plan.sql.strip(), "result": rows, "row_count": len(rows), "truncated": truncated, "max_result_rows": MAX_RESULT_ROWS, "explanation": query_plan.explanation}
